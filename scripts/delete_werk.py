@@ -18,7 +18,7 @@ from scipy.spatial.transform import Rotation as R
 
 from px4_rta_mm_gpr.utilities import test_function
 from px4_rta_mm_gpr.jax_nr import NR_tracker_original#, dynamics, predict_output, get_jac_pred_u, fake_tracker, NR_tracker_flat, NR_tracker_linpred
-from px4_rta_mm_gpr.utilities import sim_constants # Import simulation constants
+from px4_rta_mm_gpr.utilities import sim_utilities # Import simulation constants
 from px4_rta_mm_gpr.jax_mm_rta import *
 
 import jax
@@ -67,19 +67,19 @@ class OffboardControl(Node):
 
         if self.sim:
             print("Using simulator constants and functions")
-            from px4_rta_mm_gpr.utilities import sim_constants # Import simulation constants
-            self.MASS = sim_constants.MASS
-            self.THRUST_CONSTANT = sim_constants.THRUST_CONSTANT #x500 gazebo simulation motor thrust constant
-            self.MOTOR_VELOCITY_ARMED = sim_constants.MOTOR_VELOCITY_ARMED #x500 gazebo motor velocity when armed
-            self.MAX_ROTOR_SPEED = sim_constants.MAX_ROTOR_SPEED #x500 gazebo simulation max rotor speed
-            self.MOTOR_INPUT_SCALING = sim_constants.MOTOR_INPUT_SCALING #x500 gazebo simulation motor input scaling
+            from px4_rta_mm_gpr.utilities import sim_utilities # Import simulation constants
+            self.MASS = sim_utilities.MASS
+            self.THRUST_CONSTANT = sim_utilities.THRUST_CONSTANT #x500 gazebo simulation motor thrust constant
+            self.MOTOR_VELOCITY_ARMED = sim_utilities.MOTOR_VELOCITY_ARMED #x500 gazebo motor velocity when armed
+            self.MAX_ROTOR_SPEED = sim_utilities.MAX_ROTOR_SPEED #x500 gazebo simulation max rotor speed
+            self.MOTOR_INPUT_SCALING = sim_utilities.MOTOR_INPUT_SCALING #x500 gazebo simulation motor input scaling
 
         elif not self.sim:
             print("Using hardware constants and functions")
             #TODO: do the hardware version of the above here
             try:
-                from px4_rta_mm_gpr.utilities import hardware_constants
-                self.MASS = hardware_constants.MASS
+                from px4_rta_mm_gpr.utilities import hardware_utilities
+                self.MASS = hardware_utilities.MASS
             except ImportError:
                 raise ImportError("Hardware not implemented yet.")
 
