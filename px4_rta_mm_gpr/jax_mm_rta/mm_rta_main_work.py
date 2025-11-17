@@ -5,7 +5,7 @@ import jax.numpy as jnp
 
 import immrax as irx
 from .TVGPR import TVGPR # Import the TVGPR class for Gaussian Process Regression
-from px4_rta_mm_gpr.utilities.jax_setup import jit
+from px4_rta_mm_gpr_utils.utilities.jax_setup import jit
 
 
 GRAVITY: float = 9.806
@@ -85,25 +85,15 @@ class PlanarMultirotorTransformed(irx.System) :
         w_y = w_y[0]
         w_z = w_z[0]
 
-        G = self.G # gravitational acceleration
-        M = self.M # mass of the vehicle
-
-        ydot = h*jnp.cos(theta) - v*jnp.sin(theta) # ydot = h*cos(theta) - v*sin(theta)
-        zdot = h*jnp.sin(theta) + v*jnp.cos(theta) # zdot = h*sin(theta) + v*cos(theta)
-
-        # depending on the distubrance direction in the sim we may need to flip the sign on the wz terms
-        hdot = G*jnp.sin(theta) + (w_y/M)*jnp.cos(theta) + (w_z/M)*jnp.sin(theta) # hdot = G*sin(theta) + (wy/M)*cos(theta) + (wz/M)*sin(theta)
-        vdot = G*jnp.cos(theta) - (w_y/M)*jnp.sin(theta) + (w_z/M)*jnp.cos(theta) - (u1/M)
-
-        theta_dot = u2 # thetadot = u2
-
+        g = self.G
+        M = self.M
 
         return jnp.array([
-            ydot,
-            zdot,
-            hdot,
-            vdot,
-            theta_dot
+            h*jnp.cos(theta) - v*jnp.sin(theta), # ydot = h*cos(theta) - v*sin(theta)
+            h*jnp.sin(theta) + v*jnp.cos(theta), # zdot = h*sin(theta) + v*cos(theta)
+            -g*jnp.sin(theta) + (w_y/M)*jnp.cos(theta) + (w_z/M)*jnp.sin(theta), # hdot = -g*sin(theta) + (wy/M)*cos(theta) + (wz/M)*sin(theta)
+            -1 * ((u1/M) - g*jnp.cos(theta) - (w_y/M)*jnp.sin(theta) + (w_z/M)*jnp.cos(theta)), # vdot = u1 - g*cos(theta) - w1*sin(theta) + (wz/M)*cos(theta)
+            u2 # thetadot = u2
         ])
     
 
@@ -158,8 +148,9 @@ def jitted_rollout(t_init, ix, xc, K_feed, K_reference, obs_wy, obs_wz, T, dt, p
         Computes min/max of 3*sigma across the interval ix for both wind GPs.
         Optimized to share discretization and use vectorized operations.
         """
-        i_vals = jnp.arange(div1)
-        x_array = ix.lower + ((ix.upper - ix.lower)/div2) * i_vals[:, None]
+        div = 20  # Reduced from 100 for performance (5x speedup)
+        i_vals = jnp.arange(div)
+        x_array = ix.lower + ((ix.upper - ix.lower)/div) * i_vals[:, None]
 
         # Vectorized computation using vmap instead of list comprehension
         sigma_wy_vals = jax.vmap(lambda x: sigma_wy(t, x))(x_array)
@@ -237,8 +228,6 @@ def jitted_rollout(t_init, ix, xc, K_feed, K_reference, obs_wy, obs_wz, T, dt, p
 
         return ((xt_emb_p1, xt_ref_p1, MSY, MSZ), (xt_emb_p1, xt_ref_p1, u_ref_clipped))
 
-    div1 = 100
-    div2 = 100
 
 
     GPY = TVGPR(obs_wy, sigma_f = 5.0, l=2.0, sigma_n = 0.01, epsilon = 0.25) # define the GP model for the disturbance in Y
@@ -308,6 +297,8 @@ def jitted_linearize_system(sys, x0, u0, w0y, w0z):
 
 
 if __name__ == "__main__":
+    pass
+"""
     import control
 
     GP_instantiation_values = jnp.array([[-2, 0.0], #make the second column all zeros
@@ -336,32 +327,31 @@ if __name__ == "__main__":
     ix0 = irx.icentpert(x0, x0_pert)
 
     n_obs = 9
-    obs = jnp.tile(jnp.array([[0, x0[1], get_gp_mean(actual_disturbance_GP, 0.0, x0)[0]]]),(n_obs,1))
+    obs_wy = jnp.tile(jnp.array([[0, x0[1], get_gp_mean(actual_disturbance_GP, 0.0, x0)[0]]]),(n_obs,1))
+    obs_wz = jnp.tile(jnp.array([[0, x0[1], get_gp_mean(actual_disturbance_GP, 0.0, x0)[0]]]),(n_obs,1))
 
     quad_sys_planar = PlanarMultirotorTransformed(mass=MASS)
     ulim_planar = irx.interval([0, -1],[19, 1]) # type: ignore # Input saturation interval -> -5 <= u1 <= 15, -5 <= u2 <= 5
     Q_planar = jnp.array([1, 1, 1, 1, 1]) * jnp.eye(quad_sys_planar.xlen) # weights that prioritize overall tracking of the reference (defined below)
     R_planar = jnp.array([1, 1]) * jnp.eye(2)
-
-    # OR [50, 20, 50, 20, 10]
-    Q_ref_planar =jnp.array([50, 15, 50, 20, 10]) * jnp.eye(quad_sys_planar.xlen) # Different weights that prioritize reference reaching origin
+    Q_ref_planar =jnp.array([50, 20, 50, 20, 10]) * jnp.eye(quad_sys_planar.xlen) # Different weights that prioritize reference reaching origin
     #(py,pz,h,v,theta)
     R_ref_planar = jnp.array([20, 20]) * jnp.eye(2)
 
-    A,B = jitted_linearize_system(quad_sys_planar, x0, u0, w0)
+    A,B = jitted_linearize_system(quad_sys_planar, x0, u0, w0, w0)
     K_reference, P, _ = control.lqr(A, B, Q_ref_planar, R_ref_planar)
     K_feedback, P, _ = control.lqr(A, B, Q_planar, R_planar)
 
 
-    reachable_tube, rollout_ref, rollout_feedfwd_input = jitted_rollout(0.0, ix0, x0, K_feedback, K_reference, obs, 30., 0.01, irx.Permutation((0, 1, 2, 3, 4, 5, 6, 7, 8)), irx.mjacM(quad_sys_planar.f))
+    reachable_tube, rollout_ref, rollout_feedfwd_input = jitted_rollout(0.0, ix0, x0, K_feedback, K_reference, obs_wy, obs_wz, 30., 0.01, irx.Permutation((0, 1, 2, 3, 4, 5, 6, 7, 8, 9)), irx.mjacM(quad_sys_planar.f), MASS, ulim_planar, quad_sys_planar)
 
 
-    n_obs = 9
-    obs = jnp.tile(jnp.array([[0, x0[1], get_gp_mean(actual_disturbance_GP, 0.0, x0)[0]]]),(n_obs,1))
     print(f"{get_gp_mean(actual_disturbance_GP, 0.0, jnp.array([0, 0])) = }")
     print(f"{get_gp_mean(actual_disturbance_GP, 0.0, jnp.array([0, -0.55])) = }")
     print(f"{get_gp_mean(actual_disturbance_GP, 0.0, jnp.array([0, -5])) = }")
     print(f"{get_gp_mean(actual_disturbance_GP, 0.0, jnp.array([0, -10])) = }")
-    print(f"{obs = }")
+    print(f"{obs_wy = }")
+    print(f"{obs_wz = }")
 
     print("This module is not intended to be run directly. Please import it in your main script.")
+"""
